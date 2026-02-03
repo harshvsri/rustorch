@@ -1,4 +1,4 @@
-use rustorch::{MNIST_IMG_DIMENTION, MNIST_IMG_SIZE, MNIST_LABEL_SIZE, Matrix};
+use rustorch::{MNIST_IMG_DIMENTION, MNIST_IMG_SIZE, MNIST_LABEL_SIZE, tensor::Matrix};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let train_images = Matrix::load(60_000, MNIST_IMG_SIZE, "mnist/train_images.mat")?;

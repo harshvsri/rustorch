@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use rustorch::Matrix;
+    use rustorch::tensor::Matrix;
 
     fn create_matrix(rows: usize, cols: usize, values: &[f32]) -> Matrix {
         Matrix {
