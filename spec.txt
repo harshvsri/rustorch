@@ -1,0 +1,137 @@
+TECHNICAL SPECIFICATION: C-BASED AUTOGRAD ENGINE AND MNIST CLASSIFIER
+=====================================================================
+
+1.0 ABSTRACT
+------------
+This document specifies the architecture of a custom deep learning 
+framework implemented in C. The system utilizes a dynamic computational 
+graph with automatic differentiation (Reverse-Mode Autograd). Memory 
+management is handled via a linear Arena allocator for high-performance, 
+cache-friendly operations. The framework is demonstrated via a 
+handwritten digit classifier (MNIST) using a Residual MLP architecture.
+
+
+2.0 MEMORY MODEL & DATA STRUCTURES
+----------------------------------
+2.1 Linear Arena Allocator
+    - The system avoids standard `malloc/free` patterns during the
+      training loop.
+    - Architecture: A single contiguous block of memory (Arena).
+    - Allocation Strategy: `pointer += size`.
+    - Deallocation: `pointer = start` (reset entire arena at once).
+    - Benefit: Eliminates heap fragmentation and provides O(1) allocation.
+
+2.2 Matrix Tensor (Rank-2)
+    - Storage: Row-major 1D array of 32-bit floats (`f32`).
+    - Indexing: `index = row * total_cols + col`.
+    - Dimensions: `rows` (u32), `cols` (u32).
+
+2.3 Model Variable (Node)
+    - Represents a node in the computational graph.
+    - Components:
+        - `val`: Pointer to data matrix (Forward pass value).
+        - `grad`: Pointer to gradient matrix (Backward pass gradients).
+        - `op`: Enum identifier of the operation that produced this node.
+        - `inputs`: Array of pointers to parent nodes (max 2).
+    - Flags:
+        - `MV_FLAG_REQUIRES_GRAD`: Signals the engine to compute derivatives.
+        - `MV_FLAG_PARAMETER`: Indicates a learnable weight/bias.
+
+
+3.0 COMPUTATIONAL GRAPH ENGINE
+------------------------------
+3.1 Graph Construction
+    - The graph is a Directed Acyclic Graph (DAG).
+    - Construction is implicit: Calling an operator (e.g., `mv_matmul`) 
+      automatically creates a new node and links it to inputs.
+
+3.2 Topological Sort
+    - Before computation, the graph is linearized.
+    - Algorithm: Depth-First Search (DFS) with "visited" state tracking.
+    - Output: An ordered array of `model_var*` where every input appears 
+      before the node that consumes it.
+
+3.3 Forward Pass (Inference)
+    - Iterates linearly through the sorted graph.
+    - Executes `val = op(input->val)` for each node.
+
+3.4 Backward Pass (Training)
+    - Iterates strictly in REVERSE order of the sorted graph.
+    - Initialization: `Cost->grad` is set to 1.0 (Matrix fill).
+    - Accumulation: Gradients are accumulated (`+=`) to handle branching 
+      paths (e.g., in Residual connections, one variable feeds two ops).
+
+
+4.0 MATHEMATICAL OPERATORS & DERIVATIVES
+----------------------------------------
+4.1 Matrix Multiplication (Affine Transform)
+    - Forward: Y = A @ B
+    - Backward:
+      - dL/dA = (dL/dY) @ B^T
+      - dL/dB = A^T @ (dL/dY)
+    - Implementation note: Handles shape broadcasting via transposition flags.
+
+4.2 ReLU (Rectified Linear Unit)
+    - Forward: Y = max(0, X)
+    - Backward: dL/dX = (dL/dY) * (1 if X > 0 else 0)
+    - Role: Introduces non-linearity to the decision boundary.
+
+4.3 Softmax (Probability Normalization)
+    - Forward: y_i = exp(x_i) / sum(exp(x_j))
+    - Backward: Computes the Jacobian Matrix J where:
+      J_ij = y_i * (delta_ij - y_j)
+      dL/dX = J @ dL/dY
+    - Note: This implementation is fully generalized using Jacobian 
+      multiplication, rather than the simplified "Softmax-CrossEntropy" 
+      fused kernel often found in optimized libraries.
+
+4.4 Cross-Entropy Loss
+    - Forward: L = -sum(p * ln(q))
+      Where p = target distribution (one-hot), q = predicted distribution.
+    - Backward: 
+      - dL/dq = -p / q
+    - Note: This measures the information theoretic distance between 
+      predictions and truth.
+
+
+5.0 NETWORK ARCHITECTURE (MNIST)
+--------------------------------
+The implemented model is a Residual Multilayer Perceptron.
+
+Layer 1: Linear (784 -> 16) -> Bias -> ReLU
+Layer 2: Linear (16 -> 16)  -> Bias -> ReLU
+Residual: Add(Layer 1 Output, Layer 2 Output)
+Layer 3: Linear (16 -> 10)  -> Bias -> Softmax
+
+
+6.0 TRAINING PROCEDURE (Stochastic Gradient Descent)
+----------------------------------------------------
+6.1 Initialization
+    - Weights initialized using Xavier/Glorot method:
+      Range = [-sqrt(6/(fan_in + fan_out)), sqrt(6/(fan_in + fan_out))]
+    - Ensures gradients do not vanish/explode early in training.
+
+6.2 The Loop (Epoch)
+    1. Shuffle dataset indices.
+    2. Iterate through batches (Batch Size = 50).
+    3. For each example in batch:
+       a. Load input X and target Y.
+       b. Forward Pass: Compute Loss.
+       c. Backward Pass: Accumulate Gradients into parameter nodes.
+    4. Update Step:
+       a. Average the accumulated gradients (divide by batch size).
+       b. W = W - (Learning Rate * Gradient).
+       c. Clear gradients for next batch.
+
+
+7.0 KNOWN LIMITATIONS & OPTIMIZATION NOTES
+------------------------------------------
+1. Jacobian Computation: The Softmax backward pass explicitly constructs 
+   an NxN Jacobian matrix. For large output spaces (e.g., LLMs), this is 
+   O(N^2) memory and O(N^3) compute. A vector-Jacobian product (VJP) 
+   approach would be O(N).
+2. Single-Threaded: All matrix operations are serial.
+3. Batching Strategy: The implementation performs "Gradient Accumulation" 
+   (processing one item at a time and summing grads) rather than 
+   "Vectorized Batching" (processing 50 items in one giant matrix op). 
+   This is memory efficient but computationally slower on SIMD/GPU hardware.
