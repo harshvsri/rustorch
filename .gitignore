@@ -1,3 +1,4 @@
 target
+machine-learning
 mnist/*.mat
 mnist/.venv
