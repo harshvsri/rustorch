@@ -75,12 +75,9 @@ pub struct ModelVar {
     pub inputs: [Option<ModelVarId>; Self::MAX_INPUTS],
 }
 
-//  FIX: Remember to remove this temporary attribute
-#[allow(unused_variables)]
 impl ModelVar {
     pub const MAX_INPUTS: usize = 2;
 
-    //  @src/lib.rs
     //  Create a fresh model variable and register it in the arena.
     pub fn create(
         model: &mut ModelContext,
@@ -101,8 +98,6 @@ impl ModelVar {
             out.grad = Some(Matrix::new(rows, cols));
         }
 
-        //  HACK: Well here we can use the arena strategy and can use the index of the ModelVar rather
-        // than cloning it over and over agian which will be quite inefficient.
         let index = out.index;
         model.vars.push(out);
 
@@ -122,7 +117,6 @@ impl ModelVar {
         index
     }
 
-    //  @src/lib.rs
     //  Unary operation plumbing with shape propagation.
     pub fn unary_implementation(
         model: &mut ModelContext,
@@ -144,7 +138,6 @@ impl ModelVar {
         out
     }
 
-    //  @src/lib.rs
     //  Binary operation plumbing with shape propagation.
     pub fn binary_implementation(
         model: &mut ModelContext,
@@ -167,7 +160,6 @@ impl ModelVar {
         out
     }
 
-    //  @src/lib.rs
     //  Register a ReLU node in the graph.
     pub fn relu(model: &mut ModelContext, input: ModelVarId, flags: ModelVarFlags) -> ModelVarId {
         let (rows, cols) = {
@@ -178,7 +170,6 @@ impl ModelVar {
 
         Self::unary_implementation(model, input, rows, cols, flags, ModelVarOperation::Relu)
     }
-    //  @src/lib.rs
     //  Register a Softmax node in the graph.
     pub fn softmax(
         model: &mut ModelContext,
@@ -193,7 +184,6 @@ impl ModelVar {
 
         Self::unary_implementation(model, input, rows, cols, flags, ModelVarOperation::Softmax)
     }
-    //  @src/lib.rs
     //  Register an Add node in the graph.
     pub fn add(
         model: &mut ModelContext,
@@ -220,7 +210,6 @@ impl ModelVar {
             ModelVarOperation::MatAdd,
         ))
     }
-    //  @src/lib.rs
     //  Register a Sub node in the graph.
     pub fn sub(
         model: &mut ModelContext,
@@ -247,7 +236,6 @@ impl ModelVar {
             ModelVarOperation::MatSub,
         ))
     }
-    //  @src/lib.rs
     //  Register a MatMul node in the graph.
     pub fn mul(
         model: &mut ModelContext,
@@ -274,7 +262,6 @@ impl ModelVar {
             ModelVarOperation::MatMul,
         ))
     }
-    //  @src/lib.rs
     //  Register a CrossEntropy node in the graph.
     pub fn cross_entropy(
         model: &mut ModelContext,
@@ -419,9 +406,7 @@ impl ModelTraininingDesc {
 }
 
 pub fn create_mnist_model(model: &mut ModelContext) {
-    //  @src/lib.rs
     //  Build the MNIST feedforward graph (784-16-16-10) with residual add.
-    //  @src/lib.rs
     //  Weight init uses a Xavier-style bound per layer width.
     let input = ModelVar::create(
         model,
@@ -458,13 +443,13 @@ pub fn create_mnist_model(model: &mut ModelContext) {
     let bound2 = (6.0f32 / (16.0 + MNIST_LABEL_SIZE as f32)).sqrt();
 
     if let Some(val) = model.vars[w0].val.as_mut() {
-        val.fill_random(-bound0, bound0);
+        val.fill_random_range(-bound0, bound0);
     }
     if let Some(val) = model.vars[w1].val.as_mut() {
-        val.fill_random(-bound1, bound1);
+        val.fill_random_range(-bound1, bound1);
     }
     if let Some(val) = model.vars[w2].val.as_mut() {
-        val.fill_random(-bound2, bound2);
+        val.fill_random_range(-bound2, bound2);
     }
 
     let b0 = ModelVar::create(
@@ -515,10 +500,8 @@ pub fn create_mnist_model(model: &mut ModelContext) {
 }
 
 pub fn model_prog_create(model: &ModelContext, out_var: ModelVarId) -> ModelProgram {
-    //  @src/lib.rs
     //  Treat the variable arena as a DAG and compute a topological order.
-    //  @src/lib.rs
-    //  Topologically sort nodes into a forward program starting at output.
+    //  Returns a forward program starting at the output node.
     let mut visited = vec![false; model.num_vars];
     let mut stack: Vec<ModelVarId> = Vec::with_capacity(model.num_vars);
     let mut out: Vec<ModelVarId> = Vec::with_capacity(model.num_vars);
@@ -568,10 +551,8 @@ pub fn model_prog_create(model: &ModelContext, out_var: ModelVarId) -> ModelProg
 }
 
 pub fn model_prog_compute(model: &mut ModelContext, prog: &ModelProgram) {
-    //  @src/lib.rs
     //  Execute the forward program into each node's value buffer.
-    //  @src/lib.rs
-    //  Mirror the C switch by dispatching on ModelVarOperation per node.
+    //  Mirrors the C switch by dispatching on ModelVarOperation per node.
     for i in 0..prog.size {
         let cur_index = prog.vars[i];
         let op = model.vars[cur_index].op.clone();
@@ -665,10 +646,8 @@ pub fn model_prog_compute(model: &mut ModelContext, prog: &ModelProgram) {
 }
 
 pub fn model_prog_compute_grads(model: &mut ModelContext, prog: &ModelProgram) {
-    //  @src/lib.rs
     //  Backpropagate gradients through the program in reverse order.
-    //  @src/lib.rs
-    //  Clear non-parameter grads, seed the cost grad, then walk backwards.
+    //  Clears non-parameter grads, seeds the cost grad, then walks backwards.
     for i in 0..prog.size {
         let cur_index = prog.vars[i];
         let cur_flags = model.vars[cur_index].flags;
@@ -814,8 +793,16 @@ pub fn model_prog_compute_grads(model: &mut ModelContext, prog: &ModelProgram) {
                         .expect("Grad missing value");
                     (p_val, q_val, grad)
                 };
-                let p_grad = model.vars[p].grad.as_mut();
-                let q_grad = model.vars[q].grad.as_mut();
+                let p_grad = model.vars[p]
+                    .grad
+                    .as_mut()
+                    .map(|value| value as *mut Matrix);
+                let q_grad = model.vars[q]
+                    .grad
+                    .as_mut()
+                    .map(|value| value as *mut Matrix);
+                let p_grad = p_grad.map(|value| unsafe { &mut *value });
+                let q_grad = q_grad.map(|value| unsafe { &mut *value });
                 Matrix::cross_entropy_add_grad(p_grad, q_grad, &p_val, &q_val, &grad);
             }
         }
@@ -827,10 +814,8 @@ pub fn model_create() -> ModelContext {
 }
 
 pub fn model_compile(model: &mut ModelContext) {
-    //  @src/lib.rs
     //  Compile forward and cost programs from output/cost roots.
-    //  @src/lib.rs
-    //  Mirrors the C "model_compile" behavior by building two programs.
+    //  Mirrors the C `model_compile` behavior by building two programs.
     if let Some(output) = model.output {
         model.forward_prog = model_prog_create(model, output);
     }
@@ -841,16 +826,13 @@ pub fn model_compile(model: &mut ModelContext) {
 }
 
 pub fn model_feedforward(model: &mut ModelContext) {
-    //  @src/lib.rs
     //  Run a forward pass using the compiled program.
     let prog = model.forward_prog.clone();
     model_prog_compute(model, &prog);
 }
 
 pub fn model_train(model: &mut ModelContext, training_desc: &ModelTraininingDesc) {
-    //  @src/lib.rs
     //  Train the model using mini-batch gradient descent.
-    //  @src/lib.rs
     //  Shuffles each epoch, accumulates batch grads, then applies SGD.
     let train_images = &training_desc.train_images;
     let train_labels = &training_desc.train_labels;
@@ -1006,9 +988,7 @@ pub fn model_train(model: &mut ModelContext, training_desc: &ModelTraininingDesc
 }
 
 pub fn draw_mnist_digit(data: &[f32]) {
-    //  @src/lib.rs
     //  Render a 28x28 MNIST digit using ANSI background blocks.
-    //  @src/lib.rs
     //  Uses 256-color background escape codes for a simple heatmap.
     for y in 0..MNIST_IMG_DIMENTION {
         for x in 0..MNIST_IMG_DIMENTION {

@@ -1,6 +1,6 @@
 use rustorch::{
-    create_mnist_model, draw_mnist_digit, model_compile, model_create, model_feedforward,
-    model_train, tensor::Matrix, ModelTraininingDesc, MNIST_IMG_SIZE, MNIST_LABEL_SIZE,
+    MNIST_IMG_SIZE, MNIST_LABEL_SIZE, ModelTraininingDesc, create_mnist_model, draw_mnist_digit,
+    model_compile, model_create, model_feedforward, model_train, tensor::Matrix,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -26,10 +26,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     draw_mnist_digit(&test_images.data[0..MNIST_IMG_SIZE]);
-    for i in 0..MNIST_LABEL_SIZE {
-        print!("{} ", test_labels.data[i]);
-    }
-    println!("\n");
+    // for i in 0..MNIST_LABEL_SIZE {
+    //     print!("{} ", test_labels.data[i]);
+    // }
+    // println!("\n");
 
     let mut model = model_create();
     create_mnist_model(&mut model);
@@ -44,11 +44,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let output_index = model.output.expect("Model missing output");
     if let Some(output) = model.vars[output_index].val.as_ref() {
-        print!("pre-training output: ");
+        println!();
+        print!("Pre training output: ");
         for i in 0..MNIST_LABEL_SIZE {
             print!("{:.2} ", output.data[i]);
         }
-        println!();
+        println!("\n");
     }
 
     let training_desc = ModelTraininingDesc::new(
@@ -72,7 +73,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let output_index = model.output.expect("Model missing output");
     if let Some(output) = model.vars[output_index].val.as_ref() {
-        print!("post-training output: ");
+        println!();
+        print!("Post training output: ");
         for i in 0..MNIST_LABEL_SIZE {
             print!("{} ", output.data[i]);
         }

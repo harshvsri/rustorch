@@ -41,7 +41,16 @@ impl Matrix {
         self.rows * self.cols
     }
 
-    pub fn fill_random(&mut self, lower: f32, upper: f32) {
+    pub fn fill_random(&mut self) {
+        if self.data.len() != self.size() {
+            self.data.resize(self.size(), 0.0);
+        }
+        for value in &mut self.data {
+            *value = fastrand::f32() * f32::MAX;
+        }
+    }
+
+    pub fn fill_random_range(&mut self, lower: f32, upper: f32) {
         if self.data.len() != self.size() {
             self.data.resize(self.size(), 0.0);
         }
