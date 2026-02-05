@@ -28,10 +28,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let start = fastrand::usize(0..10_000) * MNIST_IMG_SIZE;
     let end = start + MNIST_IMG_SIZE;
     draw_mnist_digit(&test_images.data[start..end]);
-    // for i in 0..MNIST_LABEL_SIZE {
-    //     print!("{} ", test_labels.data[i]);
-    // }
-    // println!("\n");
 
     let mut model = model_create();
     create_mnist_model(&mut model);
@@ -67,17 +63,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let input_index = model.input.expect("Model missing input");
     let test_images = &training_desc.test_images;
     if let Some(val) = model.vars[input_index].val.as_mut() {
-        val.data
-            .copy_from_slice(&test_images.data[0..MNIST_IMG_SIZE]);
+        val.data.copy_from_slice(&test_images.data[start..end]);
     }
     model_feedforward(&mut model);
 
     let output_index = model.output.expect("Model missing output");
     if let Some(output) = model.vars[output_index].val.as_ref() {
+        let max_prob = output
+            .data
+            .iter()
+            .max_by(|a, b| a.total_cmp(b))
+            .expect("Must be a valid max probability value.");
+
         println!();
         print!("Post training output: ");
         for i in 0..MNIST_LABEL_SIZE {
-            print!("{} ", output.data[i]);
+            let curr_prob = &output.data[i];
+            if curr_prob == max_prob {
+                print!("\x1b[32m{} [{}]\x1b[0m ", output.data[i], i);
+            } else {
+                print!("{} ", output.data[i]);
+            }
         }
         println!("\n");
     }
