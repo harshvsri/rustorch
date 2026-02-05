@@ -25,7 +25,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    draw_mnist_digit(&test_images.data[0..MNIST_IMG_SIZE]);
+    let start = fastrand::usize(0..10_000) * MNIST_IMG_SIZE;
+    let end = start + MNIST_IMG_SIZE;
+    draw_mnist_digit(&test_images.data[start..end]);
     // for i in 0..MNIST_LABEL_SIZE {
     //     print!("{} ", test_labels.data[i]);
     // }
@@ -37,8 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let input_index = model.input.expect("Model missing input");
     if let Some(val) = model.vars[input_index].val.as_mut() {
-        val.data
-            .copy_from_slice(&test_images.data[0..MNIST_IMG_SIZE]);
+        val.data.copy_from_slice(&test_images.data[start..end]);
     }
     model_feedforward(&mut model);
 
