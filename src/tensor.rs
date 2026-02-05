@@ -9,6 +9,10 @@ pub struct Matrix {
 }
 
 impl Matrix {
+    /// Creates a new matrix with the given shape.
+    ///
+    /// The backing buffer is zero-filled so callers can write in-place without
+    /// needing an explicit initialization step.
     pub fn new(rows: usize, cols: usize) -> Self {
         let size = rows * cols;
         Self {
@@ -18,6 +22,10 @@ impl Matrix {
         }
     }
 
+    /// Loads a matrix of `rows * cols` f32 values from a binary file.
+    ///
+    /// If the file is smaller than the expected size, the remaining entries
+    /// stay at zero.
     pub fn load(rows: usize, cols: usize, filename: &'static str) -> Result<Self, Box<dyn Error>> {
         let mut file = std::fs::File::open(filename)?;
         let meta = file.metadata()?;
@@ -37,10 +45,14 @@ impl Matrix {
         Ok(Matrix { rows, cols, data })
     }
 
+    /// Returns the total number of elements in the matrix.
     pub fn size(&self) -> usize {
         self.rows * self.cols
     }
 
+    /// Fills the matrix with random values in [0, f32::MAX).
+    ///
+    /// This is primarily useful for quick smoke tests and debugging.
     pub fn fill_random(&mut self) {
         if self.data.len() != self.size() {
             self.data.resize(self.size(), 0.0);
@@ -50,6 +62,9 @@ impl Matrix {
         }
     }
 
+    /// Fills the matrix with random values in [lower, upper).
+    ///
+    /// Useful for symmetric weight initialization.
     pub fn fill_random_range(&mut self, lower: f32, upper: f32) {
         if self.data.len() != self.size() {
             self.data.resize(self.size(), 0.0);
@@ -59,22 +74,30 @@ impl Matrix {
         }
     }
 
+    /// Sets all elements to zero without changing the shape.
     pub fn clear(&mut self) {
         for value in &mut self.data {
             *value = 0.0;
         }
     }
 
+    /// Fills the matrix with a constant value.
     pub fn fill(&mut self, value: f32) {
         for item in &mut self.data {
             *item = value;
         }
     }
 
+    /// Returns the sum of all elements.
+    ///
+    /// This is used for computing average cost values in training.
     pub fn sum(&self) -> f32 {
         self.data.iter().sum()
     }
 
+    /// Copies values from `src` into `self` when shapes match.
+    ///
+    /// Returns `false` if the dimensions differ.
     pub fn copy(&mut self, src: &Self) -> bool {
         if self.rows != src.rows || self.cols != src.cols {
             return false;
@@ -84,24 +107,36 @@ impl Matrix {
         true
     }
 
+    /// Scales all elements by the given factor.
+    ///
+    /// Commonly used to apply the learning rate to gradients.
     pub fn scale(&mut self, factor: f32) {
         for i in 0..self.size() {
             self.data[i] *= factor;
         }
     }
 
+    /// Adds another matrix into this one in-place.
+    ///
+    /// Useful for gradient accumulation.
     pub fn add_assign(&mut self, other: &Self) {
         for i in 0..self.size() {
             self.data[i] += other.data[i];
         }
     }
 
+    /// Subtracts another matrix from this one in-place.
+    ///
+    /// Useful for SGD parameter updates.
     pub fn sub_assign(&mut self, other: &Self) {
         for i in 0..self.size() {
             self.data[i] -= other.data[i];
         }
     }
 
+    /// Returns the index of the maximum element.
+    ///
+    /// Used for classification accuracy checks.
     pub fn argmax(&self) -> usize {
         let mut max_i = 0;
         for i in 1..self.size() {
@@ -112,6 +147,9 @@ impl Matrix {
         max_i
     }
 
+    /// Transposes the matrix in-place by materializing a new buffer.
+    ///
+    /// This swaps rows and columns and rewrites the underlying storage.
     pub fn transpose(&mut self) {
         let (new_rows, new_cols) = (self.cols, self.rows);
         let mut new_data = Vec::with_capacity(self.size());
@@ -126,6 +164,9 @@ impl Matrix {
         self.data = new_data;
     }
 
+    /// Multiplies this matrix by `other` and returns a new matrix.
+    ///
+    /// Returns `None` when the inner dimensions do not match.
     pub fn matmul(&self, other: &Self) -> Option<Self> {
         if self.cols != other.rows {
             return None;
@@ -136,6 +177,9 @@ impl Matrix {
         Some(mat)
     }
 
+    /// Returns a new matrix containing the element-wise sum.
+    ///
+    /// Returns `None` when shapes differ.
     pub fn matsum(&self, other: &Self) -> Option<Self> {
         if self.rows != other.rows || self.cols != other.cols {
             return None;
@@ -146,6 +190,9 @@ impl Matrix {
         Some(mat)
     }
 
+    /// Returns a new matrix containing the element-wise difference.
+    ///
+    /// Returns `None` when shapes differ.
     pub fn matsub(&self, other: &Self) -> Option<Self> {
         if self.rows != other.rows || self.cols != other.cols {
             return None;
@@ -156,18 +203,31 @@ impl Matrix {
         Some(mat)
     }
 
+    /// Applies the ReLU (Rectified Linear Unit) activation function to the matrix.
+    ///
+    /// ReLU is a non-linear activation function defined as f(x) = max(0, x).
+    /// It effectively sets all negative values to zero while keeping positive values unchanged.
     pub fn relu(&self) -> Self {
         let mut mat = self.clone();
         Matrix::relu_into(&mut mat, self);
         mat
     }
 
+    /// Applies the (Naive) Softmax function to the matrix.
+    ///
+    /// Softmax converts a vector of raw scores (logits) into a probability distribution.
+    /// The elements of the resulting matrix will be in the range (0, 1) and sum up to 1.0.
     pub fn softmax(&self) -> Self {
         let mut mat = self.clone();
         Matrix::softmax_into(&mut mat, self);
         mat
     }
 
+    /// Calculates the Cross Entropy Loss (element-wise) between this matrix (targets) and another (predictions).
+    ///
+    /// This metric measures the difference between two probability distributions.
+    /// In classification, 'self' is usually the "One Hot Encoded" true label,
+    /// and 'other' is the probability output from the Softmax function.
     pub fn cross_entropy(&self, other: &Self) -> Option<Self> {
         if self.rows != other.rows || self.cols != other.cols {
             return None;
@@ -178,6 +238,9 @@ impl Matrix {
         Some(mat)
     }
 
+    /// Writes the element-wise sum into `out`.
+    ///
+    /// Returns `false` when shapes do not match.
     pub fn add_into(out: &mut Self, a: &Self, b: &Self) -> bool {
         if a.rows != b.rows || a.cols != b.cols {
             return false;
@@ -193,6 +256,9 @@ impl Matrix {
         true
     }
 
+    /// Writes the element-wise difference into `out`.
+    ///
+    /// Returns `false` when shapes do not match.
     pub fn sub_into(out: &mut Self, a: &Self, b: &Self) -> bool {
         if a.rows != b.rows || a.cols != b.cols {
             return false;
@@ -208,6 +274,7 @@ impl Matrix {
         true
     }
 
+    /// Multiplies A * B without transposing either operand.
     fn mat_mul_nn(out: &mut Self, a: &Self, b: &Self) {
         for i in 0..out.rows {
             for k in 0..a.cols {
@@ -219,6 +286,7 @@ impl Matrix {
         }
     }
 
+    /// Multiplies A * B^T (right operand transposed).
     fn mat_mul_nt(out: &mut Self, a: &Self, b: &Self) {
         for i in 0..out.rows {
             for j in 0..out.cols {
@@ -231,6 +299,7 @@ impl Matrix {
         }
     }
 
+    /// Multiplies A^T * B (left operand transposed).
     fn mat_mul_tn(out: &mut Self, a: &Self, b: &Self) {
         for k in 0..a.rows {
             for i in 0..out.rows {
@@ -242,6 +311,7 @@ impl Matrix {
         }
     }
 
+    /// Multiplies A^T * B^T (both operands transposed).
     fn mat_mul_tt(out: &mut Self, a: &Self, b: &Self) {
         for i in 0..out.rows {
             for j in 0..out.cols {
@@ -254,6 +324,10 @@ impl Matrix {
         }
     }
 
+    /// Multiplies matrices into `out` with optional transposes.
+    ///
+    /// The transpose flags select one of four variants:
+    /// nn: A * B, nt: A * B^T, tn: A^T * B, tt: A^T * B^T.
     pub fn mul_into(
         out: &mut Self,
         a: &Self,
@@ -290,6 +364,9 @@ impl Matrix {
         true
     }
 
+    /// Applies ReLU into `out`.
+    ///
+    /// Returns `false` when shapes do not match.
     pub fn relu_into(out: &mut Self, input: &Self) -> bool {
         if out.rows != input.rows || out.cols != input.cols {
             return false;
@@ -302,6 +379,9 @@ impl Matrix {
         true
     }
 
+    /// Applies naive softmax into `out`.
+    ///
+    /// Returns `false` when shapes do not match.
     pub fn softmax_into(out: &mut Self, input: &Self) -> bool {
         if out.rows != input.rows || out.cols != input.cols {
             return false;
@@ -320,6 +400,9 @@ impl Matrix {
         true
     }
 
+    /// Computes element-wise cross entropy into `out`.
+    ///
+    /// Returns `false` when shapes do not match.
     pub fn cross_entropy_into(out: &mut Self, p: &Self, q: &Self) -> bool {
         if p.rows != q.rows || p.cols != q.cols {
             return false;
@@ -339,6 +422,9 @@ impl Matrix {
         true
     }
 
+    /// Adds the ReLU gradient into `out`.
+    ///
+    /// Returns `false` when shapes do not match.
     pub fn relu_add_grad(out: &mut Self, input: &Self, grad: &Self) -> bool {
         if out.rows != input.rows || out.cols != input.cols {
             return false;
@@ -358,6 +444,9 @@ impl Matrix {
         true
     }
 
+    /// Applies the softmax Jacobian to the upstream gradient.
+    ///
+    /// Returns `false` when the input is not a vector.
     pub fn softmax_add_grad(out: &mut Self, softmax_out: &Self, grad: &Self) -> bool {
         if softmax_out.rows != 1 && softmax_out.cols != 1 {
             return false;
@@ -375,6 +464,9 @@ impl Matrix {
         Matrix::mul_into(out, &jacobian, grad, true, false, false)
     }
 
+    /// Adds cross-entropy gradients into `p_grad` and `q_grad` if provided.
+    ///
+    /// Returns `false` when shapes do not match.
     pub fn cross_entropy_add_grad(
         p_grad: Option<&mut Self>,
         q_grad: Option<&mut Self>,
