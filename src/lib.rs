@@ -408,6 +408,8 @@ impl ModelTraininingDesc {
 pub fn create_mnist_model(model: &mut ModelContext) {
     //  Build the MNIST feedforward graph (784-16-16-10) with residual add.
     //  Weight init uses a Xavier-style bound per layer width.
+    //  The graph is purely declarative here; execution happens in the programs
+    //  compiled from the output and cost nodes.
     let input = ModelVar::create(
         model,
         MNIST_IMG_SIZE,
@@ -442,6 +444,7 @@ pub fn create_mnist_model(model: &mut ModelContext) {
     let bound1 = (6.0f32 / (16.0 + 16.0)).sqrt();
     let bound2 = (6.0f32 / (16.0 + MNIST_LABEL_SIZE as f32)).sqrt();
 
+    //  Initialize weights in a symmetric range to stabilize early training.
     if let Some(val) = model.vars[w0].val.as_mut() {
         val.fill_random_range(-bound0, bound0);
     }
@@ -474,19 +477,23 @@ pub fn create_mnist_model(model: &mut ModelContext) {
         ModelVarOperation::Create,
     );
 
+    //  Layer 0: affine + ReLU
     let z0_a = ModelVar::mul(model, w0, input, ModelVarFlags::NONE).expect("W0*input failed");
     let z0_b = ModelVar::add(model, z0_a, b0, ModelVarFlags::NONE).expect("z0+b0 failed");
     let a0 = ModelVar::relu(model, z0_b, ModelVarFlags::NONE);
 
+    //  Layer 1: affine + ReLU with a residual add from a0.
     let z1_a = ModelVar::mul(model, w1, a0, ModelVarFlags::NONE).expect("W1*a0 failed");
     let z1_b = ModelVar::add(model, z1_a, b1, ModelVarFlags::NONE).expect("z1+b1 failed");
     let z1_c = ModelVar::relu(model, z1_b, ModelVarFlags::NONE);
     let a1 = ModelVar::add(model, a0, z1_c, ModelVarFlags::NONE).expect("a0+z1 failed");
 
+    //  Output layer: affine + softmax to produce class probabilities.
     let z2_a = ModelVar::mul(model, w2, a1, ModelVarFlags::NONE).expect("W2*a1 failed");
     let z2_b = ModelVar::add(model, z2_a, b2, ModelVarFlags::NONE).expect("z2+b2 failed");
     let output = ModelVar::softmax(model, z2_b, ModelVarFlags::OUTPUT);
 
+    //  Desired output is a one-hot vector provided at training time.
     let y = ModelVar::create(
         model,
         MNIST_LABEL_SIZE,
@@ -495,6 +502,7 @@ pub fn create_mnist_model(model: &mut ModelContext) {
         ModelVarOperation::Create,
     );
 
+    //  Cost is computed against the desired labels.
     let _cost = ModelVar::cross_entropy(model, y, output, ModelVarFlags::COST)
         .expect("cross entropy failed");
 }
@@ -502,6 +510,7 @@ pub fn create_mnist_model(model: &mut ModelContext) {
 pub fn model_prog_create(model: &ModelContext, out_var: ModelVarId) -> ModelProgram {
     //  Treat the variable arena as a DAG and compute a topological order.
     //  Returns a forward program starting at the output node.
+    //  This mimics the C stack-based traversal to avoid recursion.
     let mut visited = vec![false; model.num_vars];
     let mut stack: Vec<ModelVarId> = Vec::with_capacity(model.num_vars);
     let mut out: Vec<ModelVarId> = Vec::with_capacity(model.num_vars);
@@ -544,6 +553,7 @@ pub fn model_prog_create(model: &ModelContext, out_var: ModelVarId) -> ModelProg
         }
     }
 
+    //  The resulting program is ordered for forward execution.
     ModelProgram {
         size: out.len(),
         vars: out,
@@ -553,6 +563,7 @@ pub fn model_prog_create(model: &ModelContext, out_var: ModelVarId) -> ModelProg
 pub fn model_prog_compute(model: &mut ModelContext, prog: &ModelProgram) {
     //  Execute the forward program into each node's value buffer.
     //  Mirrors the C switch by dispatching on ModelVarOperation per node.
+    //  Each op pulls its input values and writes into the current node's matrix.
     for i in 0..prog.size {
         let cur_index = prog.vars[i];
         let op = model.vars[cur_index].op.clone();
@@ -648,6 +659,7 @@ pub fn model_prog_compute(model: &mut ModelContext, prog: &ModelProgram) {
 pub fn model_prog_compute_grads(model: &mut ModelContext, prog: &ModelProgram) {
     //  Backpropagate gradients through the program in reverse order.
     //  Clears non-parameter grads, seeds the cost grad, then walks backwards.
+    //  Parameter grads accumulate; non-parameters are reset each step.
     for i in 0..prog.size {
         let cur_index = prog.vars[i];
         let cur_flags = model.vars[cur_index].flags;
@@ -665,12 +677,14 @@ pub fn model_prog_compute_grads(model: &mut ModelContext, prog: &ModelProgram) {
         }
     }
 
+    //  Seed the gradient of the final node (cost) to 1.
     if let Some(last_index) = prog.vars.last().copied() {
         if let Some(grad) = model.vars[last_index].grad.as_mut() {
             grad.fill(1.0);
         }
     }
 
+    //  Reverse traversal applies the chain rule for each op.
     for idx in (0..prog.size).rev() {
         let cur_index = prog.vars[idx];
         let cur_flags = model.vars[cur_index].flags;
@@ -810,12 +824,14 @@ pub fn model_prog_compute_grads(model: &mut ModelContext, prog: &ModelProgram) {
 }
 
 pub fn model_create() -> ModelContext {
+    //  Create a fresh model context with empty programs and no nodes.
     ModelContext::default()
 }
 
 pub fn model_compile(model: &mut ModelContext) {
     //  Compile forward and cost programs from output/cost roots.
     //  Mirrors the C `model_compile` behavior by building two programs.
+    //  `forward_prog` runs inference; `cost_program` runs inference + loss.
     if let Some(output) = model.output {
         model.forward_prog = model_prog_create(model, output);
     }
@@ -827,6 +843,7 @@ pub fn model_compile(model: &mut ModelContext) {
 
 pub fn model_feedforward(model: &mut ModelContext) {
     //  Run a forward pass using the compiled program.
+    //  This updates model.output based on the current model.input values.
     let prog = model.forward_prog.clone();
     model_prog_compute(model, &prog);
 }
@@ -834,6 +851,7 @@ pub fn model_feedforward(model: &mut ModelContext) {
 pub fn model_train(model: &mut ModelContext, training_desc: &ModelTraininingDesc) {
     //  Train the model using mini-batch gradient descent.
     //  Shuffles each epoch, accumulates batch grads, then applies SGD.
+    //  The training loop mirrors the C version: shuffle, batch, backprop, step.
     let train_images = &training_desc.train_images;
     let train_labels = &training_desc.train_labels;
     let test_images = &training_desc.test_images;
@@ -993,11 +1011,12 @@ pub fn draw_mnist_digit(data: &[f32]) {
     for y in 0..MNIST_IMG_DIMENTION {
         for x in 0..MNIST_IMG_DIMENTION {
             let num = data[x + y * MNIST_IMG_DIMENTION];
+            //  Map intensity [0, 1] -> [232-255] 256-color grayscale ramp.
             let col = 232 + (num * 23.0) as u32;
-            print!("\x1b[48;5;{}m  ", col);
+
+            print!("\x1b[48;5;{col}m"); //  ANSI: set background to 256-color palette.
+            print!("  "); // PIXEL
         }
-        println!();
+        println!("\x1b[0m"); // ANSI: reset all attributes
     }
-    print!("\x1b[0m");
-    let _ = io::stdout().flush();
 }
